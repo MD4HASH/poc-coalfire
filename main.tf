@@ -1,5 +1,9 @@
 
 # Improvements:
+# new cert for mgmt server
+# https webserver
+# https redirection
+# chmod 600 local certs
 # - alb flow logs
 # - logging and metrics for ec2 instances
 # - dedicated key for mgmt->app ssh access
