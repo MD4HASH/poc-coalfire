@@ -1,34 +1,13 @@
-
-# Improvements:
-# - new cert for mgmt server
-# - https webserver
-# - https redirection
-# - alb flow logs
-# - logging and metrics for ec2 instances
-# - links to modules 'n stuff
-# - deploy CIS hardened ami
-# - us alb module instead of resources
-# - the management key should be stored in SSM, not locally
-# - should update modupe to output/variablize submets
-# - Use a standard like <env>-<region>-<resource-type>-<name> everywhere.
-# - store state in s3
-# - enable logging/metrics
-# - add tags throughout
-
-
-# completed improvements
-# - added keys for access
-# - added zonal availability
+# This project deploys infrastructure to support a basic web app.  It includes
+# - A load balancer that passes HTTP traffic to an auto-scaling group of application servers
+# - A management server that is accessible from the internet and that can access the application servers via ssh
+# - SSH keys for to access the management server and the application servers
+# - A VPC, security groups, and subnet to host these resources and control traffic
 
 # The next few blocks generate a local keypair and upload it to aws
 # https://github.com/btkrausen/hashicorp/blob/master/terraform/Hands-On%20Labs/Section%2004%20-%20Understand%20Terraform%20Basics/15%20-%20Terraform_TLS_Provider.md
 # Generate  Keypair
 
-locals {
-  global_tags = {
-    Project = "coalfirepoc"
-  }
-}
 
 # Create a private key to access the management server
 
@@ -98,7 +77,6 @@ data "aws_ami" "ubuntu" {
 
 module "app_sg" {
   source         = "github.com/Coalfire-CF/terraform-aws-securitygroup"
-  tags           = local.global_tags
   vpc_id         = module.coalfire_vpc.vpc_id
   sg_name_prefix = "${var.aws_region}-"
   name           = "app-sg"
@@ -134,7 +112,6 @@ module "mgmt_sg" {
   source         = "github.com/Coalfire-CF/terraform-aws-securitygroup" # Path to security group module
   sg_name_prefix = "${var.aws_region}-"
   name           = "mgmt-sg"
-  tags           = local.global_tags
   vpc_id         = module.coalfire_vpc.vpc_id
 
   ingress_rules = { # Ingress rules allowing inbound HTTPS and SSH traffic
@@ -153,11 +130,12 @@ module "mgmt_sg" {
   }
 }
 
+# Security group for the load balancer
+
 module "alb_sg" {
   source         = "github.com/Coalfire-CF/terraform-aws-securitygroup"
   sg_name_prefix = var.aws_region
   name           = "alb-sg"
-  tags           = local.global_tags
   vpc_id         = module.coalfire_vpc.vpc_id
 
   ingress_rules = { # Ingress rules allowing inbound HTTPS and SSH traffic
@@ -178,7 +156,8 @@ module "alb_sg" {
 
 }
 
-# I chose to use the terraform vpc provider because the coalfire provider does not provide assigned subnets in its outputs
+# VPC
+# I chose to use the terraform vpc provider because the coalfire provider does not provide assigned subnets in its outputs.
 # This makes it cumbersome to work with subnets in other blocks because they cannot be referenced as variables.
 # https://registry.terraform.io/modules/terraform-aws-modules/vpc/aws/latest
 
@@ -188,18 +167,28 @@ module "coalfire_vpc" {
 
   name = "main-vpc"
   cidr = var.vpc_cidr
+  azs  = [data.aws_availability_zones.available.names[0], data.aws_availability_zones.available.names[1]]
 
-  azs = [data.aws_availability_zones.available.names[0], data.aws_availability_zones.available.names[1]]
-  # Create five subnets, not three as instructed.    I didn't want to put the alb in the same subnet as the management server 
-  # and the ALB module requires at least two subnets for HA
+  # I added three subnets to the proposed design in order to support regional availability for the ALB and APP servers,
+  # as well as to keep the mgmt server in it's own subnet
   public_subnets  = [var.public_alb_subnet1, var.public_alb_subnet2, var.public_mgmt_subnet, ]
   private_subnets = [var.private_app_subnet, var.private_app_subnet2, var.private_backend_subnet]
 
   enable_nat_gateway = true
 
-  tags = local.global_tags
+  enable_flow_log                                 = true
+  flow_log_destination_type                       = "cloud-watch-logs"
+  create_flow_log_cloudwatch_iam_role             = true
+  create_flow_log_cloudwatch_log_group            = true
+  flow_log_cloudwatch_log_group_name_prefix       = "/aws/vpc/flowlogs/"
+  flow_log_cloudwatch_log_group_retention_in_days = 30
+  flow_log_max_aggregation_interval               = 60
+
 }
 
+# Management server
+# This block defines the management server, applies required permissions to the locally stored "operator" key, and copies 
+# the previously generated key that will allow it to SSH to the app servers
 # https://github.com/Coalfire-CF/terraform-aws-ec2
 module "mgmt_server" {
   source = "github.com/Coalfire-CF/terraform-aws-ec2"
@@ -219,15 +208,15 @@ module "mgmt_server" {
   # Storage
   root_volume_size = var.instance_volume_size
 
-  # Tagging
   global_tags = {}
 }
 
-# Copy private key to management server
+# Null resource for provisioners
 
 resource "null_resource" "copy_management_key" {
   depends_on = [module.mgmt_server]
 
+  # copy key to management server's file system
   provisioner "file" {
     content     = tls_private_key.management_key.private_key_pem
     destination = "/home/ubuntu/.ssh/management_key.pem"
@@ -239,10 +228,8 @@ resource "null_resource" "copy_management_key" {
       host        = module.mgmt_server.public_ip[0]
     }
   }
-  #apply permissions to local private key
-  provisioner "local-exec" {
-    command = "chmod 600 ${local_file.operator_private_key_pem.filename}"
-  }
+
+  # apply permissions to key in management server
   provisioner "remote-exec" {
     inline = [
       "chmod 600 /home/ubuntu/.ssh/management_key.pem",
@@ -256,11 +243,16 @@ resource "null_resource" "copy_management_key" {
       host        = module.mgmt_server.public_ip[0]
     }
   }
+
+  # apply permissions to local private key
+  provisioner "local-exec" {
+    command = "chmod 600 ${local_file.operator_private_key_pem.filename}"
+  }
 }
 
 
-# I defined the Auto Scale Group as a resource because coalfires EC2 module is incompatible with current verions of the ASG module (locked to >= 5.15.0, < 6.0.0)
-# https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/autoscaling_group
+# Launch template for App EC2 config, to be used by the autoscale group
+# https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/launch_template
 
 resource "aws_launch_template" "asg_launch_template" {
   name_prefix            = "${var.aws_region}-"
@@ -268,6 +260,7 @@ resource "aws_launch_template" "asg_launch_template" {
   instance_type          = var.instance_size
   key_name               = "management_key"
   vpc_security_group_ids = [module.app_sg.id]
+  # Install appache with heredoc format
   user_data = base64encode(<<-EOF
   #!/bin/bash
   sudo apt update -y
@@ -279,6 +272,10 @@ resource "aws_launch_template" "asg_launch_template" {
   EOF
   )
 }
+
+# Autoscale group
+# I defined the ASG as a resource because coalfires EC2 module is incompatible with current verions of the ASG module (locked to >= 5.15.0, < 6.0.0)
+# https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/autoscaling_group
 
 resource "aws_autoscaling_group" "asg" {
 
@@ -298,10 +295,11 @@ resource "aws_autoscaling_group" "asg" {
   }
 }
 
-
+# Application Load balancer
+# https://registry.terraform.io/modules/terraform-aws-modules/alb/aws/latest
 module "alb" {
   source  = "terraform-aws-modules/alb/aws"
-  version = "~> 8.0" # Or "~> 8.0" if pinned to AWS provider ~>5.0
+  version = "~> 8.0"
 
   name               = "application-lb"
   load_balancer_type = "application"
@@ -334,11 +332,9 @@ module "alb" {
       target_group_index = 0
     }
   ]
-
-  tags = local.global_tags
 }
 
-# Attachment (update based on your ASG; use one)
+# Attach ASG to LB
 resource "aws_autoscaling_attachment" "asg_tg_attachment" {
   autoscaling_group_name = aws_autoscaling_group.asg.name
   lb_target_group_arn    = module.alb.target_group_arns[0]

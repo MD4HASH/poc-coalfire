@@ -10,3 +10,13 @@ terraform {
     }
   }
 }
+
+provider "aws" {
+  default_tags {
+    tags = {
+      Project     = "coalfire"
+      Environment = "poc"
+      ManagedBy   = "Terraform"
+    }
+  }
+}

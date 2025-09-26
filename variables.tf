@@ -28,7 +28,7 @@ variable "private_backend_subnet" {
   default = "10.0.5.0/24"
 }
 
-variable "private_backend_subnet2" {
+variable "private_app_subnet2" {
   default = "10.0.6.0/24"
 }
 variable "instance_size" {
@@ -36,11 +36,11 @@ variable "instance_size" {
 }
 
 variable "source_ip" {
-  default = "0.0.0.0/0"
+  default = "<your-public-ip>/32"
 }
 
 variable "instance_name" {
-  default = "coalfire_poc"
+  default = "management-server"
 
 }
 
