@@ -66,3 +66,7 @@ The following reccomendations are given in order of priority:
 - The egress policies for all SGs are wide open.  They should filter at least by port.
 - Improve tagging
 - The "backend subnet" is empty, and should be removed
+
+# References
+
+- During this lab I relied heavily an AWS and coalfire documentation as listed in code comments.  Design decisions were also influenced by a terraform [course](https://www.udemy.com/course/terraform-hands-on-labs/?) I took on udemy and its included [labs](https://github.com/btkrausen/hashicorp/blob/master/terraform/Hands-On%20Labs/)
