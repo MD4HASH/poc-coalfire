@@ -59,6 +59,7 @@ The following reccomendations are given in order of priority:
 - Front the ALB with AWS WAF
 - Implement AWS Systems Manager on the EC2 instances, and scan for vulnerabilities and benchmark compliance with AWS Inspector
 - Use a CIS-hardened AMI for the EC2 instances
+- Replace the management server with a Bastion product like Teleport or Hashicorp boundary.  Configure HA.
 - Define the ALB with a module instead of raw resources
 - The management ssh key, used by the management server to access the application servers, should be stored in and retrieved from AWS Secrets Manager or the System Parameter Store
 - Store terraform state in S3
