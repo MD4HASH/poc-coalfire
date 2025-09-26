@@ -44,9 +44,9 @@ This repository contains a PoC web server environment that is fully deployable t
 
 # Implemented Improvements
 
-- This role generates unique TLS keys for operator access to the management server, and for management server access to the application servers.  It stores them in the local filesystem (excluded from git) and adjusts permissions as required.
-- This role adds three subnets to the proposed design in order to implement regional availability: two dedicated subnets for the ALB, and one extra subnet to pair with the origional application subnet.
-- This role adds VPC flow logs for network visibility.
+- This projects generates unique TLS keys for operator access to the management server, and for management server access to the application servers.  It stores them in the local filesystem (excluded from git) and adjusts permissions as required.
+- This projects adds three subnets to the proposed design in order to implement regional availability: two dedicated subnets for the ALB, and one extra subnet to pair with the origional application subnet.
+- This projects adds VPC flow logs for network visibility.
 
 ![flow-logs](images/vpc-flowlogs.png)
 
