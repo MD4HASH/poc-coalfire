@@ -27,7 +27,7 @@ This repository contains a PoC web server environment that is fully deployable t
 
 # Operational Instructions
 
-- This role generates two TLS pairs and stores the private key of both in the `secrets/` directory.  One is for access to the mangement server, and the other for the mangement server to access the application servers.  **Ensure that this directory is in your .gitignore file**, as it is in this repository.
+- This role generates two SSH pairs and stores the private key of both in the `secrets/` directory.  One is for access to the mangement server, and the other for the mangement server to access the application servers.  **Ensure that this directory is in your .gitignore file**, as it is in this repository.
 - When terraform completes, it will output the variable `alb_dns_name.` Enter this in a web browser.  Ensure that the url starts with `http://` and is not automatically changed to `https://` by the browser. (See "Recommended Improvements" section of this readme).  It will also output the public IP of the management server.
 
 ![alb-name](images/alb-name.png)
@@ -44,9 +44,9 @@ This repository contains a PoC web server environment that is fully deployable t
 
 # Implemented Improvements
 
-- This projects generates unique TLS keys for operator access to the management server, and for management server access to the application servers.  It stores them in the local filesystem (excluded from git) and adjusts permissions as required.
-- This projects adds three subnets to the proposed design in order to implement regional availability: two dedicated subnets for the ALB, and one extra subnet to pair with the origional application subnet.
-- This projects adds VPC flow logs for network visibility.
+- This project generates unique TLS keys for operator access to the management server, and for management server access to the application servers.  It stores them in the local filesystem (excluded from git) and adjusts permissions as required.
+- This project adds three subnets to the proposed design in order to implement regional availability: two dedicated subnets for the ALB, and one extra subnet to pair with the origional application subnet.
+- This project adds VPC flow logs for network visibility.
 
 ![flow-logs](images/vpc-flowlogs.png)
 
