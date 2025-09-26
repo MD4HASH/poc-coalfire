@@ -3,11 +3,6 @@ variable "aws_region" {
   default = "us-east-1"
 }
 
-variable "vpc_name" {
-  type    = string
-  default = "main"
-}
-
 variable "vpc_cidr" {
   type    = string
   default = "10.0.0.0/16"
@@ -33,6 +28,9 @@ variable "private_backend_subnet" {
   default = "10.0.5.0/24"
 }
 
+variable "private_backend_subnet2" {
+  default = "10.0.6.0/24"
+}
 variable "instance_size" {
   default = "t2.micro"
 }

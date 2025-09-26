@@ -1,20 +1,24 @@
 
 # Improvements:
-# new cert for mgmt server
-# https webserver
-# https redirection
-# chmod 600 local certs
+# - new cert for mgmt server
+# - https webserver
+# - https redirection
 # - alb flow logs
 # - logging and metrics for ec2 instances
-# - dedicated key for mgmt->app ssh access
-# - ALB needs two subnets
-# - subnets private vs public?
 # - links to modules 'n stuff
-# - inject https server
 # - deploy CIS hardened ami
-# - https for apache server
-# - drop private key in mgmt server
 # - us alb module instead of resources
+# - the management key should be stored in SSM, not locally
+# - should update modupe to output/variablize submets
+# - Use a standard like <env>-<region>-<resource-type>-<name> everywhere.
+# - store state in s3
+# - enable logging/metrics
+# - add tags throughout
+
+
+# completed improvements
+# - added keys for access
+# - added zonal availability
 
 # The next few blocks generate a local keypair and upload it to aws
 # https://github.com/btkrausen/hashicorp/blob/master/terraform/Hands-On%20Labs/Section%2004%20-%20Understand%20Terraform%20Basics/15%20-%20Terraform_TLS_Provider.md
@@ -26,7 +30,7 @@ locals {
   }
 }
 
-# Create a private key to inject into EC2 instances
+# Create a private key to access the management server
 
 resource "tls_private_key" "operator_key" {
   algorithm = "RSA"
@@ -43,6 +47,25 @@ resource "aws_key_pair" "operator_key" {
   key_name   = "operator_key"
   public_key = tls_private_key.operator_key.public_key_openssh
 }
+
+# Create a private key for the management server to access the application servers
+
+resource "tls_private_key" "management_key" {
+  algorithm = "RSA"
+}
+
+# Save private file in secrets directory (ensure "secrets/*" is included in .gitignore)
+resource "local_file" "management_private_key_pem" {
+  content  = tls_private_key.management_key.private_key_pem
+  filename = "secrets/management_key.pem"
+}
+
+# Create keypair in aws
+resource "aws_key_pair" "management_key" {
+  key_name   = "management_key"
+  public_key = tls_private_key.management_key.public_key_openssh
+}
+
 
 # Look up current avaialbility zones
 
@@ -82,22 +105,17 @@ module "app_sg" {
 
   ingress_rules = { # Ingress rules allowing inbound HTTPS and SSH traffic
     "allow_http1" = {
-      ip_protocol = "tcp"
-      from_port   = "80"
-      to_port     = "80"
-      cidr_ipv4   = var.public_alb_subnet1
+      ip_protocol                  = "tcp"
+      from_port                    = "80"
+      to_port                      = "80"
+      referenced_security_group_id = module.alb_sg.id
     }
-    "allow_http2" = {
-      ip_protocol = "tcp"
-      from_port   = "80"
-      to_port     = "80"
-      cidr_ipv4   = var.public_alb_subnet2
-    }
+
     "allow_ssh" = {
-      ip_protocol = "tcp"
-      from_port   = "22"
-      to_port     = "22"
-      cidr_ipv4   = var.public_mgmt_subnet
+      ip_protocol                  = "tcp"
+      from_port                    = "22"
+      to_port                      = "22"
+      referenced_security_group_id = module.mgmt_sg.id
     }
   }
 
@@ -115,7 +133,7 @@ module "app_sg" {
 module "mgmt_sg" {
   source         = "github.com/Coalfire-CF/terraform-aws-securitygroup" # Path to security group module
   sg_name_prefix = "${var.aws_region}-"
-  name           = "mgmg_sg"
+  name           = "mgmt-sg"
   tags           = local.global_tags
   vpc_id         = module.coalfire_vpc.vpc_id
 
@@ -137,8 +155,8 @@ module "mgmt_sg" {
 
 module "alb_sg" {
   source         = "github.com/Coalfire-CF/terraform-aws-securitygroup"
-  sg_name_prefix = "${var.aws_region}-"
-  name           = "alb_sg"
+  sg_name_prefix = var.aws_region
+  name           = "alb-sg"
   tags           = local.global_tags
   vpc_id         = module.coalfire_vpc.vpc_id
 
@@ -174,11 +192,10 @@ module "coalfire_vpc" {
   azs = [data.aws_availability_zones.available.names[0], data.aws_availability_zones.available.names[1]]
   # Create five subnets, not three as instructed.    I didn't want to put the alb in the same subnet as the management server 
   # and the ALB module requires at least two subnets for HA
-  public_subnets  = [var.public_mgmt_subnet, var.public_alb_subnet1, var.public_alb_subnet2]
-  private_subnets = [var.private_app_subnet, var.private_backend_subnet]
+  public_subnets  = [var.public_alb_subnet1, var.public_alb_subnet2, var.public_mgmt_subnet, ]
+  private_subnets = [var.private_app_subnet, var.private_app_subnet2, var.private_backend_subnet]
 
   enable_nat_gateway = true
-  single_nat_gateway = false
 
   tags = local.global_tags
 }
@@ -206,15 +223,51 @@ module "mgmt_server" {
   global_tags = {}
 }
 
-# Defining the Auto Scale Group as a resource because coalfires EC2 module is incompatible with current verions of the ASG module (locked to >= 5.15.0, < 6.0.0)
+# Copy private key to management server
+
+resource "null_resource" "copy_management_key" {
+  depends_on = [module.mgmt_server]
+
+  provisioner "file" {
+    content     = tls_private_key.management_key.private_key_pem
+    destination = "/home/ubuntu/.ssh/management_key.pem"
+
+    connection {
+      type        = "ssh"
+      user        = "ubuntu"
+      private_key = tls_private_key.operator_key.private_key_pem
+      host        = module.mgmt_server.public_ip[0]
+    }
+  }
+  #apply permissions to local private key
+  provisioner "local-exec" {
+    command = "chmod 600 ${local_file.operator_private_key_pem.filename}"
+  }
+  provisioner "remote-exec" {
+    inline = [
+      "chmod 600 /home/ubuntu/.ssh/management_key.pem",
+      "chown ubuntu:ubuntu /home/ubuntu/.ssh/management_key.pem"
+    ]
+
+    connection {
+      type        = "ssh"
+      user        = "ubuntu"
+      private_key = tls_private_key.operator_key.private_key_pem
+      host        = module.mgmt_server.public_ip[0]
+    }
+  }
+}
+
+
+# I defined the Auto Scale Group as a resource because coalfires EC2 module is incompatible with current verions of the ASG module (locked to >= 5.15.0, < 6.0.0)
 # https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/autoscaling_group
 
 resource "aws_launch_template" "asg_launch_template" {
   name_prefix            = "${var.aws_region}-"
   image_id               = data.aws_ami.ubuntu.id
   instance_type          = var.instance_size
-  key_name               = "operator_key"
-  vpc_security_group_ids = [module.alb_sg.id]
+  key_name               = "management_key"
+  vpc_security_group_ids = [module.app_sg.id]
   user_data = base64encode(<<-EOF
   #!/bin/bash
   sudo apt update -y
@@ -237,7 +290,7 @@ resource "aws_autoscaling_group" "asg" {
   health_check_type         = "ELB"
   desired_capacity          = 2
   force_delete              = true
-  vpc_zone_identifier       = [module.coalfire_vpc.private_subnets[0]]
+  vpc_zone_identifier       = [module.coalfire_vpc.private_subnets[0], module.coalfire_vpc.private_subnets[2]]
 
   launch_template {
     id      = aws_launch_template.asg_launch_template.id
@@ -245,46 +298,48 @@ resource "aws_autoscaling_group" "asg" {
   }
 }
 
-# Create ALB
 
-resource "aws_lb" "alb" {
-  name                       = "application-lb"
-  internal                   = false
-  load_balancer_type         = "application"
-  security_groups            = [module.alb_sg.id]
-  subnets                    = [module.coalfire_vpc.public_subnets[1], module.coalfire_vpc.public_subnets[2]]
+module "alb" {
+  source  = "terraform-aws-modules/alb/aws"
+  version = "~> 8.0" # Or "~> 8.0" if pinned to AWS provider ~>5.0
+
+  name               = "application-lb"
+  load_balancer_type = "application"
+  vpc_id             = module.coalfire_vpc.vpc_id
+  subnets            = [module.coalfire_vpc.public_subnets[1], module.coalfire_vpc.public_subnets[2]]
+  security_groups    = [module.alb_sg.id]
+
   enable_deletion_protection = false
 
+  target_groups = [
+    {
+      name_prefix      = "app-"
+      backend_protocol = "HTTP"
+      backend_port     = 80
+      target_type      = "instance"
+      health_check = {
+        path                = "/"
+        interval            = 30
+        timeout             = 5
+        healthy_threshold   = 2
+        unhealthy_threshold = 2
+      }
+    }
+  ]
+
+  http_tcp_listeners = [
+    {
+      port               = 80
+      protocol           = "HTTP"
+      target_group_index = 0
+    }
+  ]
+
+  tags = local.global_tags
 }
 
-# Create ALB target group
-
-resource "aws_lb_target_group" "alb_tg" {
-  name     = "app-tg"
-  port     = 80
-  protocol = "HTTP"
-  vpc_id   = module.coalfire_vpc.vpc_id
-  health_check {
-    path                = "/"
-    interval            = 30
-    timeout             = 5
-    healthy_threshold   = 2
-    unhealthy_threshold = 2
-  }
-}
-
-resource "aws_lb_listener" "http" {
-  load_balancer_arn = aws_lb.alb.arn
-  port              = 80
-  protocol          = "HTTP"
-
-  default_action {
-    type             = "forward"
-    target_group_arn = aws_lb_target_group.alb_tg.arn
-  }
-}
-
+# Attachment (update based on your ASG; use one)
 resource "aws_autoscaling_attachment" "asg_tg_attachment" {
   autoscaling_group_name = aws_autoscaling_group.asg.name
-  lb_target_group_arn    = aws_lb_target_group.alb_tg.arn
+  lb_target_group_arn    = module.alb.target_group_arns[0]
 }

@@ -27,9 +27,16 @@ This repository contains a PoC web server environment that is fully deployable t
 
 # Operational instructions
 
-- When terraform completes,it will output the variable `alb_dns_name.` Enter this in a web browser.  Ensure that the url starts with `http://` and is not automatically changed to `https://` by the browser.
+- This role generates two TLS pairs and stores the private key of both in the `secrets/` directory.  One is for access to the mangement server, and the other for the mangement server to access the application servers.  **Ensure that this directory is in your .gitignore file**, as it is in this repository.
+- When terraform completes, it will output the variable `alb_dns_name.` Enter this in a web browser.  Ensure that the url starts with `http://` and is not automatically changed to `https://` by the browser. (See "imporovements" section of this readme).
+- It will also output the public IP of the management server.  Use to SSH from your workstation to the management server, and then from the management server to the application servers. The ips of the application servers need to be retreived from the console after deploying the environment.
 - This role generates a TLS certificate in the /secrets directory.  
   - Ensure that this directory is in your .gitignore file.
   - from the root terraform directory, you can use this key to ssh to the management servers public ip:
   - ssh -i ./secrets/operator_key.pem x.x.x.x
 - from the management server, you can also ssh to the application servers
+
+# Implemented Improvements
+
+- This role generates unique TLS keys for operator access to the management server, and then for management server access to the application servers.  It stores them in the local filesystems and adjusts permissions as required.
+- I added two subnets to the proposed design in order to implement regional availaibility.   The ASG and ALB both span two zones
