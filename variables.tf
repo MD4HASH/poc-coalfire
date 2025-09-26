@@ -36,7 +36,7 @@ variable "instance_size" {
 }
 
 variable "source_ip" {
-  default = "<your-public-ip>/32"
+  default = "0.0.0.0/0"
 }
 
 variable "instance_name" {
